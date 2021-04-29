@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.ML;
+using Microsoft.ML.Data;
+using Microsoft.ML.Transforms.TimeSeries;
 
 namespace mlnetWeatherForecasterWebAPI
 {
@@ -17,11 +19,6 @@ namespace mlnetWeatherForecasterWebAPI
         {
             //Configuration
             WebHost.CreateDefaultBuilder()
-                .ConfigureServices(services => {
-                    // Register prediction engine
-                    services.AddPredictionEnginePool<Sentiment.Input, Sentiment.Output>()
-                        .FromUri("https://github.com/dotnet/samples/raw/master/machine-learning/models/sentimentanalysis/sentiment_model.zip");
-                })
                 .Configure(options => {
                     options.UseRouting();
                     options.UseEndpoints(routes => {
@@ -35,18 +32,26 @@ namespace mlnetWeatherForecasterWebAPI
 
         static async Task PredictHandler(HttpContext http)
         {
-            // Get PredictionEnginePool service
-            var predEngine = http.RequestServices.GetRequiredService<PredictionEnginePool<Sentiment.Input, Sentiment.Output>>();
+            var mlContext = new MLContext();
+
+            //Define DataViewSchema for data preparation pipeline and trained model
+            DataViewSchema modelSchema;
+
+            // Load trained models
+            ITransformer trainedModel = mlContext.Model.Load("minTempForecastModel.zip", out modelSchema);
+
+            // Create time series engine
+            var forecastEngine = trainedModel.CreateTimeSeriesEngine<ModelInput, ModelOutput>(mlContext);
 
             // Deserialize HTTP request JSON body
             var body = http.Request.Body as Stream;
-            var input = await JsonSerializer.DeserializeAsync<Sentiment.Input>(body);
+            var input = await JsonSerializer.DeserializeAsync<ModelInput>(body);
 
-            // Predict
-            var prediction = predEngine.Predict(input);
+            // Predict with time series engine
+            var prediction = forecastEngine.Predict(input, horizon: 7);
 
             // Return prediction as response
-            var response = JsonSerializer.Serialize<Sentiment.Output>(prediction);
+            var response = JsonSerializer.Serialize<ModelOutput>(prediction);
             http.Response.ContentType = "application/json";
             await http.Response.WriteAsync(response);
         }
